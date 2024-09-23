@@ -1,0 +1,7 @@
+{
+    "uuid": "mousemove@yourdomain.com",
+    "name": "Mouse Move",
+    "description": "Starts and stops the mousemove script",
+    "shell-version": ["42", "43", "44"]
+}
+
