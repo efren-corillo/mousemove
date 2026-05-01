@@ -1,7 +1,11 @@
 {
-    "uuid": "mousemove@yourdomain.com",
+    "uuid": "mousemove@efren-corillo.github.com",
     "name": "Mouse Move",
-    "description": "Starts and stops the mousemove script",
-    "shell-version": ["42", "43", "44"]
+    "description": "Automatically moves mouse cursor after idle time to keep presence",
+    "version": 1,
+    "shell-version": ["45", "46", "47", "48", "49"],
+    "url": "https://github.com/efren-corillo/mousemove",
+    "settings-schema": "org.gnome.shell.extensions.mousemove",
+    "gettext-domain": "mousemove"
 }
 
