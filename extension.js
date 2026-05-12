@@ -12,6 +12,7 @@ const Indicator = GObject.registerClass(
     class Indicator extends PanelMenu.Button {
         _init(extension) {
             super._init(0.0, 'Mouse Move');
+            log('MouseMove: Initializing indicator');
             this._extension = extension;
             this._settings = extension.getSettings();
             this._timeoutId = null;
@@ -28,6 +29,7 @@ const Indicator = GObject.registerClass(
 
             this._enabledItem = new PopupMenu.PopupSwitchMenuItem('Enabled', false);
             this._enabledItem.connect('toggled', (item) => {
+                log(`MouseMove: Toggle menu item clicked: ${item.state}`);
                 this._setEnabled(item.state);
             });
             this.menu.addMenuItem(this._enabledItem);
@@ -41,6 +43,7 @@ const Indicator = GObject.registerClass(
             this.menu.addMenuItem(settingsItem);
 
             this._settings.connect('changed::enabled', () => {
+                log(`MouseMove: Enabled setting changed to ${this._settings.get_boolean('enabled')}`);
                 this._sync();
             });
 
@@ -49,19 +52,25 @@ const Indicator = GObject.registerClass(
 
         _sync() {
             const enabled = this._settings.get_boolean('enabled');
+            log(`MouseMove: Syncing state, enabled=${enabled}`);
             this._enabledItem.setToggleState(enabled);
             this._setEnabled(enabled);
         }
 
         _setEnabled(enabled) {
-            if (this._enabled === enabled) return;
+            if (this._enabled === enabled) {
+                log(`MouseMove: State already ${enabled}, skipping`);
+                return;
+            }
             this._enabled = enabled;
             this._settings.set_boolean('enabled', enabled);
 
             if (enabled) {
+                log('MouseMove: Monitoring started');
                 this._icon.icon_name = 'input-mouse-symbolic';
                 this._startMonitoring();
             } else {
+                log('MouseMove: Monitoring stopped');
                 this._icon.icon_name = 'input-mouse-symbolic';
                 this._stopMonitoring();
             }
@@ -80,7 +89,10 @@ const Indicator = GObject.registerClass(
         }
 
         _checkIdle() {
-            if (!this._enabled) return;
+            if (!this._enabled) {
+                log('MouseMove: CheckIdle called but disabled');
+                return;
+            }
 
             this._updateActivityTime();
 
@@ -88,6 +100,7 @@ const Indicator = GObject.registerClass(
             const threshold = this._settings.get_int('idle-seconds') * 1000;
 
             if (idleTime >= threshold) {
+                log(`MouseMove: Idle for ${Math.round(idleTime / 1000)}s, threshold ${threshold / 1000}s. Moving mouse.`);
                 this._moveMouse();
                 this._lastActivityTime = Date.now();
             }
@@ -101,24 +114,16 @@ const Indicator = GObject.registerClass(
 
         _updateActivityTime() {
             try {
-                const display = Gdk.Display.get_default();
-                if (!display) return;
-
-                const seat = display.get_default_seat();
-                if (!seat) return;
-
-                const device = seat.get_pointer();
-                if (!device) return;
-
-                let [, x, y] = device.get_position();
+                let [x, y] = global.get_pointer();
 
                 if (x !== this._lastX || y !== this._lastY) {
+                    log(`MouseMove: Activity detected at (${x}, ${y})`);
                     this._lastActivityTime = Date.now();
                     this._lastX = x;
                     this._lastY = y;
                 }
             } catch (e) {
-                logError(e, 'MouseMove');
+                log(`MouseMove: Error updating activity time: ${e.message}`);
             }
         }
 
@@ -127,13 +132,7 @@ const Indicator = GObject.registerClass(
                 const display = Gdk.Display.get_default();
                 if (!display) return;
 
-                const seat = display.get_default_seat();
-                if (!seat) return;
-
-                const device = seat.get_pointer();
-                if (!device) return;
-
-                let [, x, y] = device.get_position();
+                let [x, y] = global.get_pointer();
                 const monitor = display.get_monitor_at_point(x, y);
                 if (!monitor) return;
 
@@ -143,15 +142,28 @@ const Indicator = GObject.registerClass(
                 this._lastX = x;
                 this._lastY = y;
 
-                const newX = Math.min(Math.max(x + moveDistance, rect.x), rect.x + rect.width - 1);
-                const newY = Math.min(Math.max(y, rect.y), rect.y + rect.height - 1);
+                // Toggle direction to make it move back and forth (more visible)
+                this._moveDirection = (this._moveDirection || 1) * -1;
+                
+                let newX = x + (moveDistance * this._moveDirection);
+                let newY = y + (moveDistance * this._moveDirection);
 
+                // Boundary checks
+                if (newX >= rect.x + rect.width || newX < rect.x) newX = x - (moveDistance * this._moveDirection);
+                if (newY >= rect.y + rect.height || newY < rect.y) newY = y - (moveDistance * this._moveDirection);
+
+                const seat = display.get_default_seat();
+                const device = seat.get_pointer();
+                
+                log(`MouseMove: MOVING cursor from (${x}, ${y}) to (${newX}, ${newY}) [Distance: ${moveDistance}px, ${this._isWayland ? 'Wayland' : 'X11'}]`);
                 device.warp(display.get_default_screen?.() || display, newX, newY);
+                
+                Main.notify('MouseMove: Cursor jumped to maintain presence');
 
                 this._lastX = newX;
                 this._lastY = newY;
             } catch (e) {
-                logError(e, 'MouseMove');
+                log(`MouseMove: Error moving mouse: ${e.message}`);
             }
         }
 
@@ -166,6 +178,14 @@ export default class MouseMoveExtension extends Extension {
     enable() {
         this._indicator = new Indicator(this);
         Main.panel.addToStatusArea(this.uuid, this._indicator);
+    }
+
+    disable() {
+        this._indicator?.destroy();
+        this._indicator = null;
+    }
+}
+     Main.panel.addToStatusArea(this.uuid, this._indicator);
     }
 
     disable() {
