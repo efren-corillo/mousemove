@@ -97,14 +97,24 @@ const Indicator = GObject.registerClass(
 
             this._updateActivityTime();
 
-            const idleTime = Date.now() - this._lastActivityTime;
+            const now = Date.now();
+            const idleTime = now - this._lastActivityTime;
             const threshold = this._settings.get_int('idle-seconds') * 1000;
             const interval = this._settings.get_int('check-interval');
 
+            // HEARTBEAT: This should pop up every check interval
+            Main.notify(`MouseMove: checking... (Idle: ${Math.round(idleTime/1000)}s)`);
+
             if (idleTime >= threshold) {
-                console.log(`MouseMove: IDLE for ${Math.round(idleTime / 1000)}s. Moving cursor.`);
+                global.log(`MouseMove: IDLE DETECTED. Moving cursor.`);
                 this._moveMouse();
                 this._lastActivityTime = Date.now();
+            } else {
+                this._lastLogTime = this._lastLogTime || 0;
+                if (now - this._lastLogTime >= 2000) {
+                    global.log(`MouseMove: Status - Idle for ${Math.round(idleTime/1000)}s / ${threshold/1000}s`);
+                    this._lastLogTime = now;
+                }
             }
 
             this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, interval, () => {

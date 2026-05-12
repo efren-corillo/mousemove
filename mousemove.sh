@@ -20,19 +20,26 @@ echo "$CURRENT_DATE" > "$DATE_FILE"
 
 # Kill existing instances
 pkill -f keep-presence || true
+sleep 1
 
-# Fetch settings from GSettings to sync with the extension
+# Fetch settings from GSettings
 SCHEMA="org.gnome.shell.extensions.mousemove"
 SCHEMA_DIR="/home/ren/.local/share/gnome-shell/extensions/mousemove@efren-corillo.github.com/schemas"
 
-# Check if enabled in extension
 ENABLED=$(GSETTINGS_SCHEMA_DIR="$SCHEMA_DIR" gsettings get "$SCHEMA" enabled)
+IDLE_SECS=$(GSETTINGS_SCHEMA_DIR="$SCHEMA_DIR" gsettings get "$SCHEMA" idle-seconds)
+
+echo "--- Start Attempt: $(date) ---" >> "$LOG_FILE"
 
 if [ "$ENABLED" == "true" ]; then
-    IDLE_SECS=$(GSETTINGS_SCHEMA_DIR="$SCHEMA_DIR" gsettings get "$SCHEMA" idle-seconds)
-    echo "Starting keep-presence (${IDLE_SECS}s) at $(date)" >> "$LOG_FILE"
-    PYTHONUNBUFFERED=1 stdbuf -oL -eL keep-presence --seconds="$IDLE_SECS" >> "$LOG_FILE" 2>&1 &
-    echo "keep-presence started with PID $!" >> "$LOG_FILE"
+    # Using 'script' to force a pseudo-terminal (PTY), which forces line-buffering
+    # We use -c to run the command and -f to flush output immediately
+    # /dev/null is used for the script's own log file as we redirect stdout
+    # Added -p 100 to make movement VERY visible
+    nohup script -q -c "keep-presence --seconds=$IDLE_SECS -p 100" -f /dev/null >> "$LOG_FILE" 2>&1 &
+    
+    PID=$!
+    echo "keep-presence started via script (PID $PID, Idle ${IDLE_SECS}s)" >> "$LOG_FILE"
 else
-    echo "Extension is disabled in GSettings. Script will not start." >> "$LOG_FILE"
+    echo "Extension is DISABLED in GSettings." >> "$LOG_FILE"
 fi
