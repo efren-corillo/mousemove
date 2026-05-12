@@ -12,6 +12,7 @@ const Indicator = GObject.registerClass(
     class Indicator extends PanelMenu.Button {
         _init(extension) {
             super._init(0.0, 'Mouse Move');
+            console.log('MouseMove: Indicator _init');
             this._extension = extension;
             this._settings = extension.getSettings();
             this._timeoutId = null;
@@ -19,6 +20,11 @@ const Indicator = GObject.registerClass(
             this._lastY = 0;
             this._lastActivityTime = Date.now();
             this._enabled = false;
+            this._moveDirection = 1;
+
+            // Detect Display Server
+            this._isWayland = GLib.getenv('XDG_SESSION_TYPE') === 'wayland';
+            console.log(`MouseMove: Initializing on ${this._isWayland ? 'Wayland' : 'X11'}`);
 
             this._icon = new St.Icon({
                 icon_name: 'input-mouse-symbolic',
@@ -27,9 +33,15 @@ const Indicator = GObject.registerClass(
             this.add_child(this._icon);
 
             this._enabledItem = new PopupMenu.PopupSwitchMenuItem('Enabled', false);
-            this._enabledItem.connect('toggled', (item) => {
-                this._setEnabled(item.state);
-            });
+            
+            // Bind the switch to the setting
+            this._settings.bind(
+                'enabled',
+                this._enabledItem._switch,
+                'state',
+                Gio.SettingsBindFlags.DEFAULT
+            );
+
             this.menu.addMenuItem(this._enabledItem);
 
             this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
@@ -40,29 +52,30 @@ const Indicator = GObject.registerClass(
             });
             this.menu.addMenuItem(settingsItem);
 
+            // Watch settings changes
             this._settings.connect('changed::enabled', () => {
-                this._sync();
+                this._updateEnabledState();
+            });
+            
+            this._settings.connect('changed::idle-seconds', () => {
+                const val = this._settings.get_int('idle-seconds');
+                Main.notify(`MouseMove: Idle threshold changed to ${val}s`);
             });
 
-            this._sync();
+            // Initial state
+            this._updateEnabledState();
         }
 
-        _sync() {
+        _updateEnabledState() {
             const enabled = this._settings.get_boolean('enabled');
-            this._enabledItem.setToggleState(enabled);
-            this._setEnabled(enabled);
-        }
-
-        _setEnabled(enabled) {
             if (this._enabled === enabled) return;
+            
             this._enabled = enabled;
-            this._settings.set_boolean('enabled', enabled);
+            console.log(`MouseMove: Monitoring state -> ${enabled}`);
 
             if (enabled) {
-                this._icon.icon_name = 'input-mouse-symbolic';
                 this._startMonitoring();
             } else {
-                this._icon.icon_name = 'input-mouse-symbolic';
                 this._stopMonitoring();
             }
         }
@@ -84,15 +97,26 @@ const Indicator = GObject.registerClass(
 
             this._updateActivityTime();
 
-            const idleTime = Date.now() - this._lastActivityTime;
+            const now = Date.now();
+            const idleTime = now - this._lastActivityTime;
             const threshold = this._settings.get_int('idle-seconds') * 1000;
+            const interval = this._settings.get_int('check-interval');
+
+            // HEARTBEAT: This should pop up every check interval
+            Main.notify(`MouseMove: checking... (Idle: ${Math.round(idleTime/1000)}s)`);
 
             if (idleTime >= threshold) {
+                global.log(`MouseMove: IDLE DETECTED. Moving cursor.`);
                 this._moveMouse();
                 this._lastActivityTime = Date.now();
+            } else {
+                this._lastLogTime = this._lastLogTime || 0;
+                if (now - this._lastLogTime >= 2000) {
+                    global.log(`MouseMove: Status - Idle for ${Math.round(idleTime/1000)}s / ${threshold/1000}s`);
+                    this._lastLogTime = now;
+                }
             }
 
-            const interval = this._settings.get_int('check-interval');
             this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, interval, () => {
                 this._checkIdle();
                 return GLib.SOURCE_REMOVE;
@@ -101,16 +125,7 @@ const Indicator = GObject.registerClass(
 
         _updateActivityTime() {
             try {
-                const display = Gdk.Display.get_default();
-                if (!display) return;
-
-                const seat = display.get_default_seat();
-                if (!seat) return;
-
-                const device = seat.get_pointer();
-                if (!device) return;
-
-                let [, x, y] = device.get_position();
+                let [x, y] = global.get_pointer();
 
                 if (x !== this._lastX || y !== this._lastY) {
                     this._lastActivityTime = Date.now();
@@ -118,7 +133,7 @@ const Indicator = GObject.registerClass(
                     this._lastY = y;
                 }
             } catch (e) {
-                logError(e, 'MouseMove');
+                console.error(`MouseMove: Error updating activity: ${e.message}`);
             }
         }
 
@@ -127,13 +142,7 @@ const Indicator = GObject.registerClass(
                 const display = Gdk.Display.get_default();
                 if (!display) return;
 
-                const seat = display.get_default_seat();
-                if (!seat) return;
-
-                const device = seat.get_pointer();
-                if (!device) return;
-
-                let [, x, y] = device.get_position();
+                let [x, y] = global.get_pointer();
                 const monitor = display.get_monitor_at_point(x, y);
                 if (!monitor) return;
 
@@ -143,15 +152,26 @@ const Indicator = GObject.registerClass(
                 this._lastX = x;
                 this._lastY = y;
 
-                const newX = Math.min(Math.max(x + moveDistance, rect.x), rect.x + rect.width - 1);
-                const newY = Math.min(Math.max(y, rect.y), rect.y + rect.height - 1);
+                this._moveDirection *= -1;
+                
+                let newX = x + (moveDistance * this._moveDirection);
+                let newY = y + (moveDistance * this._moveDirection);
 
+                if (newX >= rect.x + rect.width || newX < rect.x) newX = x - (moveDistance * this._moveDirection);
+                if (newY >= rect.y + rect.height || newY < rect.y) newY = y - (moveDistance * this._moveDirection);
+
+                const seat = display.get_default_seat();
+                const device = seat.get_pointer();
+                
+                console.log(`MouseMove: WARP (${x}, ${y}) -> (${newX}, ${newY}) [${this._isWayland ? 'Wayland' : 'X11'}]`);
                 device.warp(display.get_default_screen?.() || display, newX, newY);
+                
+                Main.notify('MouseMove: Cursor jumped to maintain presence');
 
                 this._lastX = newX;
                 this._lastY = newY;
             } catch (e) {
-                logError(e, 'MouseMove');
+                console.error(`MouseMove: Error moving cursor: ${e.message}`);
             }
         }
 
@@ -164,11 +184,13 @@ const Indicator = GObject.registerClass(
 
 export default class MouseMoveExtension extends Extension {
     enable() {
+        console.log('MouseMove: Extension ENABLE');
         this._indicator = new Indicator(this);
         Main.panel.addToStatusArea(this.uuid, this._indicator);
     }
 
     disable() {
+        console.log('MouseMove: Extension DISABLE');
         this._indicator?.destroy();
         this._indicator = null;
     }

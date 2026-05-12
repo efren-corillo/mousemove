@@ -27,8 +27,8 @@ export default class MouseMovePreferences extends ExtensionPreferences {
         settings.bind('enabled', enabledRow, 'active', Gio.SettingsBindFlags.DEFAULT);
 
         const idleRow = new Adw.SpinRow({
-            title: _('Idle Time'),
-            subtitle: _('Seconds of inactivity before moving mouse'),
+            title: _('Idle Threshold (seconds)'),
+            subtitle: _('Wait duration of inactivity before the cursor moves'),
             adjustment: new Gtk.Adjustment({
                 lower: 1,
                 upper: 300,
@@ -41,8 +41,8 @@ export default class MouseMovePreferences extends ExtensionPreferences {
         settings.bind('idle-seconds', idleRow, 'value', Gio.SettingsBindFlags.DEFAULT);
 
         const distanceRow = new Adw.SpinRow({
-            title: _('Move Distance'),
-            subtitle: _('Pixels to move the cursor'),
+            title: _('Movement Distance (pixels)'),
+            subtitle: _('How many pixels the cursor will jump'),
             adjustment: new Gtk.Adjustment({
                 lower: 1,
                 upper: 100,
@@ -55,8 +55,8 @@ export default class MouseMovePreferences extends ExtensionPreferences {
         settings.bind('move-distance', distanceRow, 'value', Gio.SettingsBindFlags.DEFAULT);
 
         const intervalRow = new Adw.SpinRow({
-            title: _('Check Interval'),
-            subtitle: _('Milliseconds between idle checks'),
+            title: _('Check Frequency (milliseconds)'),
+            subtitle: _('How often the extension checks for user activity'),
             adjustment: new Gtk.Adjustment({
                 lower: 100,
                 upper: 5000,
