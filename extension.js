@@ -188,7 +188,13 @@ const Indicator = GObject.registerClass(
                 if (!monitor) return;
 
                 const rect = monitor.get_geometry();
-                const moveDistance = this._settings.get_int('move-distance');
+                let moveDistance = this._settings.get_int('move-distance');
+
+                if (this._settings.get_boolean('randomize-movement')) {
+                    // Randomize between 50% and 150% of the set distance
+                    const factor = 0.5 + Math.random();
+                    moveDistance = Math.max(1, Math.round(moveDistance * factor));
+                }
 
                 this._lastX = x;
                 this._lastY = y;
