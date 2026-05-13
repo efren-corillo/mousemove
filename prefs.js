@@ -26,6 +26,13 @@ export default class MouseMovePreferences extends ExtensionPreferences {
         group.add(enabledRow);
         settings.bind('enabled', enabledRow, 'active', Gio.SettingsBindFlags.DEFAULT);
 
+        const startupRow = new Adw.SwitchRow({
+            title: _('Enable on Startup'),
+            subtitle: _('Automatically enable mouse movement when the extension loads')
+        });
+        group.add(startupRow);
+        settings.bind('enable-on-startup', startupRow, 'active', Gio.SettingsBindFlags.DEFAULT);
+
         const idleRow = new Adw.SpinRow({
             title: _('Idle Threshold (seconds)'),
             subtitle: _('Wait duration of inactivity before the cursor moves'),
@@ -55,13 +62,13 @@ export default class MouseMovePreferences extends ExtensionPreferences {
         settings.bind('move-distance', distanceRow, 'value', Gio.SettingsBindFlags.DEFAULT);
 
         const intervalRow = new Adw.SpinRow({
-            title: _('Check Frequency (milliseconds)'),
+            title: _('Check Frequency (seconds)'),
             subtitle: _('How often the extension checks for user activity'),
             adjustment: new Gtk.Adjustment({
-                lower: 100,
-                upper: 5000,
-                step_increment: 100,
-                page_increment: 500,
+                lower: 1,
+                upper: 60,
+                step_increment: 1,
+                page_increment: 5,
                 value: settings.get_int('check-interval')
             })
         });

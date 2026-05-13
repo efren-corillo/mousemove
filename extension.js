@@ -100,19 +100,19 @@ const Indicator = GObject.registerClass(
             const now = Date.now();
             const idleTime = now - this._lastActivityTime;
             const threshold = this._settings.get_int('idle-seconds') * 1000;
-            const interval = this._settings.get_int('check-interval');
+            const interval = this._settings.get_int('check-interval') * 1000;
 
             // HEARTBEAT: This should pop up every check interval
             Main.notify(`MouseMove: checking... (Idle: ${Math.round(idleTime/1000)}s)`);
 
             if (idleTime >= threshold) {
-                global.log(`MouseMove: IDLE DETECTED. Moving cursor.`);
+                console.log(`MouseMove: IDLE DETECTED. Moving cursor.`);
                 this._moveMouse();
                 this._lastActivityTime = Date.now();
             } else {
                 this._lastLogTime = this._lastLogTime || 0;
                 if (now - this._lastLogTime >= 2000) {
-                    global.log(`MouseMove: Status - Idle for ${Math.round(idleTime/1000)}s / ${threshold/1000}s`);
+                    console.log(`MouseMove: Status - Idle for ${Math.round(idleTime/1000)}s / ${threshold/1000}s`);
                     this._lastLogTime = now;
                 }
             }
@@ -185,6 +185,10 @@ const Indicator = GObject.registerClass(
 export default class MouseMoveExtension extends Extension {
     enable() {
         console.log('MouseMove: Extension ENABLE');
+        const settings = this.getSettings();
+        if (settings.get_boolean('enable-on-startup')) {
+            settings.set_boolean('enabled', true);
+        }
         this._indicator = new Indicator(this);
         Main.panel.addToStatusArea(this.uuid, this._indicator);
     }
