@@ -2,7 +2,7 @@
     "uuid": "mousemove@efren-corillo.github.com",
     "name": "Mouse Move",
     "description": "Automatically moves mouse cursor after idle time to keep presence",
-    "version": 2,
+    "version": 3,
     "shell-version": ["45", "46", "47", "48", "49"],
     "url": "https://github.com/efren-corillo/mousemove",
     "settings-schema": "org.gnome.shell.extensions.mousemove",
