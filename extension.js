@@ -24,9 +24,6 @@ const Indicator = GObject.registerClass(
             this._extension = extension;
             this._settings = extension.getSettings();
             this._timeoutId = null;
-            this._lastX = 0;
-            this._lastY = 0;
-            this._lastActivityTime = Date.now();
             this._enabled = false;
             this._isIdle = false;
             this._moveDirection = 1;
@@ -107,11 +104,11 @@ const Indicator = GObject.registerClass(
         }
 
         /**
-         * One tick of the monitoring loop. Refreshes the activity timestamp,
-         * computes how long the pointer has been still, and if that exceeds
-         * the user's idle threshold, jiggles the cursor. Logs a transition
-         * line the first time we enter the idle state in a session. Always
-         * schedules the next tick via GLib.timeout_add.
+         * One tick of the monitoring loop. Queries the GNOME IdleMonitor for
+         * the time since any input (mouse, keyboard, touch) was last received,
+         * and if that exceeds the user's idle threshold, jiggles the cursor.
+         * Logs transitions into and out of the idle state. Always schedules
+         * the next tick via GLib.timeout_add.
          *
          * Reads GSettings:
          *   - `idle-seconds`   (int, seconds) → threshold before jiggling
@@ -120,9 +117,8 @@ const Indicator = GObject.registerClass(
         _checkIdle() {
             if (!this._enabled) return;
 
-            this._updateActivityTime();
-
-            const idleTime = Date.now() - this._lastActivityTime;
+            const idleMonitor = global.backend.get_core_idle_monitor();
+            const idleTime = idleMonitor ? idleMonitor.get_idletime() : 0;
             const threshold = this._settings.get_int('idle-seconds') * 1000;
             const interval = this._settings.get_int('check-interval') * 60 * 1000;
 
@@ -132,7 +128,11 @@ const Indicator = GObject.registerClass(
                     console.log('MouseMove: User went idle — activating cursor movement');
                 }
                 this._moveMouse();
-                this._lastActivityTime = Date.now();
+            } else {
+                if (this._isIdle) {
+                    this._isIdle = false;
+                    console.log('MouseMove: User presence detected — deactivating cursor movement');
+                }
             }
 
             this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, interval, () => {
@@ -142,38 +142,11 @@ const Indicator = GObject.registerClass(
         }
 
         /**
-         * Polls the current pointer position via `global.get_pointer()` and
-         * updates _lastActivityTime if the pointer has moved since the last
-         * call. When real pointer movement is detected while we were in the
-         * idle state, logs a "presence detected" transition line and clears
-         * _isIdle. Errors are caught and logged so the loop survives.
-         */
-        _updateActivityTime() {
-            try {
-                let [x, y] = global.get_pointer();
-
-                if (x !== this._lastX || y !== this._lastY) {
-                    if (this._isIdle) {
-                        this._isIdle = false;
-                        console.log('MouseMove: User presence detected — deactivating cursor movement');
-                    }
-                    this._lastActivityTime = Date.now();
-                    this._lastX = x;
-                    this._lastY = y;
-                }
-            } catch (e) {
-                console.error(`MouseMove: Error updating activity: ${e.message}`);
-            }
-        }
-
-        /**
          * Warps the cursor by `move-distance` pixels (read from GSettings) in
          * the current direction. Direction alternates each call so consecutive
          * jiggles cancel out and the cursor stays near its origin. If the new
          * position would fall outside the monitor geometry, the move is
-         * reflected to the opposite direction. After the warp, _lastX/_lastY
-         * are updated to the new position so _updateActivityTime doesn't
-         * mistake the warp itself for user activity.
+         * reflected to the opposite direction.
          *
          * Reads GSettings:
          *   - `move-distance` (int, pixels)
@@ -196,9 +169,6 @@ const Indicator = GObject.registerClass(
                     moveDistance = Math.max(1, Math.round(moveDistance * factor));
                 }
 
-                this._lastX = x;
-                this._lastY = y;
-
                 this._moveDirection *= -1;
 
                 let newX = x + (moveDistance * this._moveDirection);
@@ -211,9 +181,6 @@ const Indicator = GObject.registerClass(
                 const device = seat.get_pointer();
 
                 device.warp(display.get_default_screen?.() || display, newX, newY);
-
-                this._lastX = newX;
-                this._lastY = newY;
             } catch (e) {
                 console.error(`MouseMove: Error moving cursor: ${e.message}`);
             }
