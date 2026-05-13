@@ -55,13 +55,13 @@ export default class MouseMovePreferences extends ExtensionPreferences {
         settings.bind('move-distance', distanceRow, 'value', Gio.SettingsBindFlags.DEFAULT);
 
         const intervalRow = new Adw.SpinRow({
-            title: _('Check Frequency (milliseconds)'),
+            title: _('Check Frequency (minutes)'),
             subtitle: _('How often the extension checks for user activity'),
             adjustment: new Gtk.Adjustment({
-                lower: 100,
-                upper: 5000,
-                step_increment: 100,
-                page_increment: 500,
+                lower: 1,
+                upper: 30,
+                step_increment: 1,
+                page_increment: 5,
                 value: settings.get_int('check-interval')
             })
         });
