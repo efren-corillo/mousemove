@@ -54,6 +54,13 @@ export default class MouseMovePreferences extends ExtensionPreferences {
         group.add(distanceRow);
         settings.bind('move-distance', distanceRow, 'value', Gio.SettingsBindFlags.DEFAULT);
 
+        const randomizeRow = new Adw.SwitchRow({
+            title: _('Randomize Movement'),
+            subtitle: _('Vary the jump distance slightly each time for a more natural feel')
+        });
+        group.add(randomizeRow);
+        settings.bind('randomize-movement', randomizeRow, 'active', Gio.SettingsBindFlags.DEFAULT);
+
         const intervalRow = new Adw.SpinRow({
             title: _('Check Frequency (minutes)'),
             subtitle: _('How often the extension checks for user activity'),
