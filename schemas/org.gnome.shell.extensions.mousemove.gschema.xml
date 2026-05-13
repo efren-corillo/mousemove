@@ -7,10 +7,10 @@
       <description>Enable automatic mouse movement to maintain presence</description>
     </key>
     <key name="check-interval" type="i">
-      <default>1</default>
-      <summary>Check interval in seconds</summary>
-      <description>Seconds between idle time checks</description>
-      <range min="1" max="60"/>
+      <default>4</default>
+      <summary>Check interval in minutes</summary>
+      <description>Minutes between idle time checks</description>
+      <range min="1" max="30"/>
     </key>
     <key name="idle-seconds" type="i">
       <default>3</default>
@@ -23,15 +23,6 @@
       <summary>Move distance in pixels</summary>
       <description>Number of pixels to move the cursor</description>
       <range min="1" max="100"/>
-    </key>
-    <!-- Startup Settings -->
-    <key name="separator-1" type="s">
-      <default>''</default>
-    </key>
-    <key name="enable-on-startup" type="b">
-      <default>false</default>
-      <summary>Enable on startup</summary>
-      <description>Automatically enable mouse movement when the extension loads</description>
     </key>
   </schema>
 </schemalist>

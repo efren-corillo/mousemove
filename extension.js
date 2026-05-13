@@ -10,9 +10,17 @@ import GObject from 'gi://GObject';
 
 const Indicator = GObject.registerClass(
     class Indicator extends PanelMenu.Button {
+        /**
+         * Constructs the panel indicator: initialises internal state, builds the
+         * status-area icon and popup menu (Enabled switch + Settings… entry), and
+         * wires the menu switch to the `enabled` GSetting via Gio.Settings.bind.
+         *
+         * @param {Extension} extension - The owning MouseMoveExtension instance;
+         *   used to look up GSettings (`extension.getSettings()`) and to open the
+         *   preferences window from the Settings… menu entry.
+         */
         _init(extension) {
             super._init(0.0, 'Mouse Move');
-            console.log('MouseMove: Indicator _init');
             this._extension = extension;
             this._settings = extension.getSettings();
             this._timeoutId = null;
@@ -20,11 +28,8 @@ const Indicator = GObject.registerClass(
             this._lastY = 0;
             this._lastActivityTime = Date.now();
             this._enabled = false;
+            this._isIdle = false;
             this._moveDirection = 1;
-
-            // Detect Display Server
-            this._isWayland = GLib.getenv('XDG_SESSION_TYPE') === 'wayland';
-            console.log(`MouseMove: Initializing on ${this._isWayland ? 'Wayland' : 'X11'}`);
 
             this._icon = new St.Icon({
                 icon_name: 'input-mouse-symbolic',
@@ -33,7 +38,7 @@ const Indicator = GObject.registerClass(
             this.add_child(this._icon);
 
             this._enabledItem = new PopupMenu.PopupSwitchMenuItem('Enabled', false);
-            
+
             // Bind the switch to the setting
             this._settings.bind(
                 'enabled',
@@ -52,39 +57,48 @@ const Indicator = GObject.registerClass(
             });
             this.menu.addMenuItem(settingsItem);
 
-            // Watch settings changes
             this._settings.connect('changed::enabled', () => {
                 this._updateEnabledState();
             });
-            
-            this._settings.connect('changed::idle-seconds', () => {
-                const val = this._settings.get_int('idle-seconds');
-                Main.notify(`MouseMove: Idle threshold changed to ${val}s`);
-            });
 
-            // Initial state
             this._updateEnabledState();
         }
 
+        /**
+         * Reacts to changes in the `enabled` GSetting (toggled via the panel
+         * switch or the preferences window). Starts the idle-check loop when
+         * the setting flips to true; stops it and clears the cached idle state
+         * when it flips to false. Idempotent: no-ops if the effective state is
+         * unchanged.
+         */
         _updateEnabledState() {
             const enabled = this._settings.get_boolean('enabled');
             if (this._enabled === enabled) return;
-            
+
             this._enabled = enabled;
-            console.log(`MouseMove: Monitoring state -> ${enabled}`);
 
             if (enabled) {
                 this._startMonitoring();
             } else {
+                this._isIdle = false;
                 this._stopMonitoring();
             }
         }
 
+        /**
+         * Begins the idle-monitoring loop. Cancels any pre-existing timeout
+         * first to avoid duplicate concurrent loops, then fires _checkIdle()
+         * immediately (which reschedules itself).
+         */
         _startMonitoring() {
             this._stopMonitoring();
             this._checkIdle();
         }
 
+        /**
+         * Cancels the pending GLib timeout if one is scheduled. Safe to call
+         * even when no timeout is active.
+         */
         _stopMonitoring() {
             if (this._timeoutId) {
                 GLib.source_remove(this._timeoutId);
@@ -92,29 +106,33 @@ const Indicator = GObject.registerClass(
             }
         }
 
+        /**
+         * One tick of the monitoring loop. Refreshes the activity timestamp,
+         * computes how long the pointer has been still, and if that exceeds
+         * the user's idle threshold, jiggles the cursor. Logs a transition
+         * line the first time we enter the idle state in a session. Always
+         * schedules the next tick via GLib.timeout_add.
+         *
+         * Reads GSettings:
+         *   - `idle-seconds`   (int, seconds) → threshold before jiggling
+         *   - `check-interval` (int, minutes) → delay until the next tick
+         */
         _checkIdle() {
             if (!this._enabled) return;
 
             this._updateActivityTime();
 
-            const now = Date.now();
-            const idleTime = now - this._lastActivityTime;
+            const idleTime = Date.now() - this._lastActivityTime;
             const threshold = this._settings.get_int('idle-seconds') * 1000;
-            const interval = this._settings.get_int('check-interval') * 1000;
-
-            // HEARTBEAT: This should pop up every check interval
-            Main.notify(`MouseMove: checking... (Idle: ${Math.round(idleTime/1000)}s)`);
+            const interval = this._settings.get_int('check-interval') * 60 * 1000;
 
             if (idleTime >= threshold) {
-                console.log(`MouseMove: IDLE DETECTED. Moving cursor.`);
+                if (!this._isIdle) {
+                    this._isIdle = true;
+                    console.log('MouseMove: User went idle — activating cursor movement');
+                }
                 this._moveMouse();
                 this._lastActivityTime = Date.now();
-            } else {
-                this._lastLogTime = this._lastLogTime || 0;
-                if (now - this._lastLogTime >= 2000) {
-                    console.log(`MouseMove: Status - Idle for ${Math.round(idleTime/1000)}s / ${threshold/1000}s`);
-                    this._lastLogTime = now;
-                }
             }
 
             this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, interval, () => {
@@ -123,11 +141,22 @@ const Indicator = GObject.registerClass(
             });
         }
 
+        /**
+         * Polls the current pointer position via `global.get_pointer()` and
+         * updates _lastActivityTime if the pointer has moved since the last
+         * call. When real pointer movement is detected while we were in the
+         * idle state, logs a "presence detected" transition line and clears
+         * _isIdle. Errors are caught and logged so the loop survives.
+         */
         _updateActivityTime() {
             try {
                 let [x, y] = global.get_pointer();
 
                 if (x !== this._lastX || y !== this._lastY) {
+                    if (this._isIdle) {
+                        this._isIdle = false;
+                        console.log('MouseMove: User presence detected — deactivating cursor movement');
+                    }
                     this._lastActivityTime = Date.now();
                     this._lastX = x;
                     this._lastY = y;
@@ -137,6 +166,18 @@ const Indicator = GObject.registerClass(
             }
         }
 
+        /**
+         * Warps the cursor by `move-distance` pixels (read from GSettings) in
+         * the current direction. Direction alternates each call so consecutive
+         * jiggles cancel out and the cursor stays near its origin. If the new
+         * position would fall outside the monitor geometry, the move is
+         * reflected to the opposite direction. After the warp, _lastX/_lastY
+         * are updated to the new position so _updateActivityTime doesn't
+         * mistake the warp itself for user activity.
+         *
+         * Reads GSettings:
+         *   - `move-distance` (int, pixels)
+         */
         _moveMouse() {
             try {
                 const display = Gdk.Display.get_default();
@@ -153,7 +194,7 @@ const Indicator = GObject.registerClass(
                 this._lastY = y;
 
                 this._moveDirection *= -1;
-                
+
                 let newX = x + (moveDistance * this._moveDirection);
                 let newY = y + (moveDistance * this._moveDirection);
 
@@ -162,11 +203,8 @@ const Indicator = GObject.registerClass(
 
                 const seat = display.get_default_seat();
                 const device = seat.get_pointer();
-                
-                console.log(`MouseMove: WARP (${x}, ${y}) -> (${newX}, ${newY}) [${this._isWayland ? 'Wayland' : 'X11'}]`);
+
                 device.warp(display.get_default_screen?.() || display, newX, newY);
-                
-                Main.notify('MouseMove: Cursor jumped to maintain presence');
 
                 this._lastX = newX;
                 this._lastY = newY;
@@ -175,6 +213,12 @@ const Indicator = GObject.registerClass(
             }
         }
 
+        /**
+         * Lifecycle hook called when the indicator is being torn down (e.g.
+         * extension disable or shell restart). Stops the monitoring loop so
+         * no further timeouts fire after destruction, then defers to the
+         * parent PanelMenu.Button.destroy for the rest of the cleanup.
+         */
         destroy() {
             this._stopMonitoring();
             super.destroy();
@@ -183,18 +227,27 @@ const Indicator = GObject.registerClass(
 );
 
 export default class MouseMoveExtension extends Extension {
+    /**
+     * GNOME Shell lifecycle hook fired when the extension is loaded (on
+     * shell startup, login, or `gnome-extensions enable`). Forces the
+     * `enabled` GSetting to false so monitoring never auto-starts — the
+     * user must opt in via the panel switch each session — then constructs
+     * the indicator and adds it to the top-panel status area under the
+     * extension UUID.
+     */
     enable() {
-        console.log('MouseMove: Extension ENABLE');
-        const settings = this.getSettings();
-        if (settings.get_boolean('enable-on-startup')) {
-            settings.set_boolean('enabled', true);
-        }
+        this.getSettings().set_boolean('enabled', false);
         this._indicator = new Indicator(this);
         Main.panel.addToStatusArea(this.uuid, this._indicator);
     }
 
+    /**
+     * GNOME Shell lifecycle hook fired when the extension is unloaded
+     * (on shell shutdown, logout, or `gnome-extensions disable`). Destroys
+     * the indicator (which stops the monitoring loop via its own destroy)
+     * and drops the reference so the instance can be garbage collected.
+     */
     disable() {
-        console.log('MouseMove: Extension DISABLE');
         this._indicator?.destroy();
         this._indicator = null;
     }
