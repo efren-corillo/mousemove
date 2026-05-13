@@ -1,27 +1,28 @@
 # Release Notes
 
-## [1.2.20260514055636] - 2026-05-14
+## [1.2.20260514061540] - 2026-05-14
 ### Added
-- Historical release notes for previous versions (v1.1.0 and v1.0.0).
+- Comprehensive historical release notes for all previous versions.
+- Updated documentation and README consistency.
 
 ## [1.2.0] - 2026-05-14
+### Added
+- **Enable on Startup**: New setting to automatically activate mouse movement when GNOME Shell loads.
+- **Monitoring Controls**: Simplified controls to reduce log noise and improve usability.
 ### Refactored
-- **Idle Monitoring**: Improved state management with a new `_isIdle` flag to prevent redundant logging and notifications.
+- **Idle Monitoring**: Improved state management with a new `_isIdle` flag to prevent redundant logging.
 ### Improved
-- **Timing Logic**: Changed `check-interval` from milliseconds to minutes to reduce system overhead and provide more sensible defaults.
-- **UX Improvements**: Removed intrusive notifications and cleaned up console logging.
-### Documentation
-- Added comprehensive JSDoc comments to `Indicator` and `MouseMoveExtension` classes for better maintainability.
+- **Timing Logic**: Switched `check-interval` from milliseconds to minutes for better resource efficiency.
+- **Documentation**: Added full JSDoc coverage to core classes.
 ### Changed
-- **Setting Bounds**: Updated schema ranges for `check-interval` to 1-30 minutes.
+- **Setting Bounds**: Updated `check-interval` range to 1-30 minutes.
 
 ## [1.1.0] - 2026-05-13
 ### Added
-- Synchronize bash script with extension settings.
-- Wayland compatibility improvements and movement visibility.
-- Modernized extension for GNOME 45+ with native preferences.
-### Fixed
-- Logging reliability on Wayland.
+- **Bash Integration**: Synchronized standalone `mousemove.sh` with extension settings.
+- **Wayland Support**: Improved cursor movement visibility and logging reliability on Wayland sessions.
+- **Modernization**: Full refactor for GNOME 45+ compatibility with native preferences UI.
 
 ## [1.0.0] - 2024-09-23
-- Initial implementation of Mouse Move GNOME extension.
+### Added
+- Initial release with basic idle detection and mouse cursor movement.
