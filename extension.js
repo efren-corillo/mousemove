@@ -31,13 +31,8 @@ const Indicator = GObject.registerClass(
             this._isIdle = false;
             this._moveDirection = 1;
 
-            this._outlineGicon = Gio.ThemedIcon.new('input-mouse-symbolic');
-            this._filledGicon = Gio.FileIcon.new(
-                Gio.File.new_for_path(`${extension.path}/icons/mousemove-filled-symbolic.svg`)
-            );
-
             this._icon = new St.Icon({
-                gicon: this._outlineGicon,
+                icon_name: 'input-mouse-symbolic',
                 style_class: 'system-status-icon'
             });
             this.add_child(this._icon);
@@ -81,7 +76,6 @@ const Indicator = GObject.registerClass(
             if (this._enabled === enabled) return;
 
             this._enabled = enabled;
-            this._icon.gicon = enabled ? this._filledGicon : this._outlineGicon;
 
             if (enabled) {
                 this._startMonitoring();
