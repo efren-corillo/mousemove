@@ -61,14 +61,21 @@ export default class MouseMovePreferences extends ExtensionPreferences {
         group.add(randomizeRow);
         settings.bind('randomize-movement', randomizeRow, 'active', Gio.SettingsBindFlags.DEFAULT);
 
+        const notificationsRow = new Adw.SwitchRow({
+            title: _('Show Notifications'),
+            subtitle: _('Show a banner when monitoring goes idle (active) and when you return')
+        });
+        group.add(notificationsRow);
+        settings.bind('show-notifications', notificationsRow, 'active', Gio.SettingsBindFlags.DEFAULT);
+
         const intervalRow = new Adw.SpinRow({
-            title: _('Check Frequency (minutes)'),
-            subtitle: _('How often the extension checks for user activity'),
+            title: _('Check Frequency (seconds)'),
+            subtitle: _('How often the cursor jiggles once the idle threshold has been reached'),
             adjustment: new Gtk.Adjustment({
                 lower: 1,
-                upper: 30,
+                upper: 3600,
                 step_increment: 1,
-                page_increment: 5,
+                page_increment: 10,
                 value: settings.get_int('check-interval')
             })
         });
