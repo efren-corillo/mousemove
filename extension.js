@@ -1,5 +1,7 @@
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
+import * as Config from 'resource:///org/gnome/shell/misc/config.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import St from 'gi://St';
@@ -30,6 +32,9 @@ const Indicator = GObject.registerClass(
             this._enabled = false;
             this._isIdle = false;
             this._moveDirection = 1;
+            this._inhibitCookie = 0;
+            this._notifSource = null;
+            this._shellMajor = parseInt(Config.PACKAGE_VERSION.split('.')[0], 10);
 
             this._outlineGicon = Gio.ThemedIcon.new('input-mouse-symbolic');
             this._filledGicon = Gio.FileIcon.new(
@@ -84,20 +89,98 @@ const Indicator = GObject.registerClass(
             this._icon.gicon = enabled ? this._filledGicon : this._outlineGicon;
 
             if (enabled) {
+                this._addInhibitor();
                 this._startMonitoring();
             } else {
                 this._isIdle = false;
                 this._stopMonitoring();
+                this._removeInhibitor();
+            }
+        }
+
+        /**
+         * Asks GNOME's SessionManager to inhibit auto-suspend and the idle
+         * flag (flags 4 | 8) while monitoring is on. Cursor warping alone
+         * does not register as user input, so Mutter's idle timer keeps
+         * ticking and GNOME still suspends; the inhibitor is what actually
+         * keeps the session awake. Stores the returned cookie so we can
+         * release the inhibitor when monitoring is disabled.
+         */
+        _addInhibitor() {
+            if (this._inhibitCookie) return;
+            try {
+                Gio.DBus.session.call(
+                    'org.gnome.SessionManager',
+                    '/org/gnome/SessionManager',
+                    'org.gnome.SessionManager',
+                    'Inhibit',
+                    new GLib.Variant('(susu)', [
+                        'mousemove@efren-corillo.github.com',
+                        0,
+                        'Mouse Move keeping session active',
+                        12,
+                    ]),
+                    new GLib.VariantType('(u)'),
+                    Gio.DBusCallFlags.NONE,
+                    -1,
+                    null,
+                    (conn, res) => {
+                        try {
+                            const reply = conn.call_finish(res);
+                            this._inhibitCookie = reply.deep_unpack()[0];
+                        } catch (e) {
+                            console.error(`MouseMove: Inhibit failed: ${e.message}`);
+                        }
+                    }
+                );
+            } catch (e) {
+                console.error(`MouseMove: Inhibit call error: ${e.message}`);
+            }
+        }
+
+        /**
+         * Releases the SessionManager inhibitor obtained by _addInhibitor.
+         * Safe to call when no inhibitor is held.
+         */
+        _removeInhibitor() {
+            if (!this._inhibitCookie) return;
+            const cookie = this._inhibitCookie;
+            this._inhibitCookie = 0;
+            try {
+                Gio.DBus.session.call(
+                    'org.gnome.SessionManager',
+                    '/org/gnome/SessionManager',
+                    'org.gnome.SessionManager',
+                    'Uninhibit',
+                    new GLib.Variant('(u)', [cookie]),
+                    null,
+                    Gio.DBusCallFlags.NONE,
+                    -1,
+                    null,
+                    null
+                );
+            } catch (e) {
+                console.error(`MouseMove: Uninhibit call error: ${e.message}`);
             }
         }
 
         /**
          * Begins the idle-monitoring loop. Cancels any pre-existing timeout
-         * first to avoid duplicate concurrent loops, then fires _checkIdle()
-         * immediately (which reschedules itself).
+         * first to avoid duplicate concurrent loops, resets the activity
+         * baseline so a stale _lastActivityTime from a previous enable cycle
+         * doesn't trigger an immediate spurious idle, then fires
+         * _checkIdle() (which reschedules itself).
          */
         _startMonitoring() {
             this._stopMonitoring();
+            this._lastActivityTime = Date.now();
+            try {
+                let [x, y] = global.get_pointer();
+                this._lastX = x;
+                this._lastY = y;
+            } catch (e) {
+                // Non-fatal; _updateActivityTime will recover on next tick.
+            }
             this._checkIdle();
         }
 
@@ -113,35 +196,47 @@ const Indicator = GObject.registerClass(
         }
 
         /**
-         * One tick of the monitoring loop. Refreshes the activity timestamp,
-         * computes how long the pointer has been still, and if that exceeds
-         * the user's idle threshold, jiggles the cursor. Logs a transition
-         * line the first time we enter the idle state in a session. Always
-         * schedules the next tick via GLib.timeout_add.
+         * One tick of the monitoring loop. Two-phase cadence:
+         *
+         *  - Pre-idle: sleep exactly until the idle threshold would expire
+         *    (`threshold - idleTime`, min 1s). `check-interval` is NOT used
+         *    here — there is no point polling more often than the threshold,
+         *    since real pointer movement keeps pushing _lastActivityTime
+         *    forward and only the time-since-last-activity decides whether
+         *    we've crossed into idle.
+         *  - Post-idle: jiggle and re-arm at `check-interval` seconds. The
+         *    cadence stays fixed at that interval until the user returns;
+         *    _updateActivityTime() clears `_isIdle` as soon as it sees real
+         *    pointer movement (warps don't count — _moveMouse() updates
+         *    _lastX/_lastY to the warped position).
          *
          * Reads GSettings:
-         *   - `idle-seconds`   (int, seconds) → threshold before jiggling
-         *   - `check-interval` (int, minutes) → delay until the next tick
+         *   - `idle-seconds`   (int, seconds) → threshold before going idle
+         *   - `check-interval` (int, seconds) → jiggle cadence once idle
          */
         _checkIdle() {
             if (!this._enabled) return;
 
             this._updateActivityTime();
 
-            const idleTime = Date.now() - this._lastActivityTime;
             const threshold = this._settings.get_int('idle-seconds') * 1000;
-            const interval = this._settings.get_int('check-interval') * 60 * 1000;
+            const idleTime = Date.now() - this._lastActivityTime;
 
-            if (idleTime >= threshold) {
-                if (!this._isIdle) {
-                    this._isIdle = true;
-                    console.log('MouseMove: User went idle — activating cursor movement');
-                }
+            let nextDelay;
+            if (this._isIdle) {
                 this._moveMouse();
-                this._lastActivityTime = Date.now();
+                nextDelay = this._settings.get_int('check-interval') * 1000;
+            } else if (idleTime >= threshold) {
+                this._isIdle = true;
+                console.log('MouseMove: User went idle — activating cursor movement');
+                this._notify('Mouse Move active', 'Idle detected — keeping your session awake.');
+                this._moveMouse();
+                nextDelay = this._settings.get_int('check-interval') * 1000;
+            } else {
+                nextDelay = Math.max(1000, threshold - idleTime);
             }
 
-            this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, interval, () => {
+            this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, nextDelay, () => {
                 this._checkIdle();
                 return GLib.SOURCE_REMOVE;
             });
@@ -162,6 +257,7 @@ const Indicator = GObject.registerClass(
                     if (this._isIdle) {
                         this._isIdle = false;
                         console.log('MouseMove: User presence detected — deactivating cursor movement');
+                        this._notify('Mouse Move paused', 'Welcome back — cursor movement stopped.');
                     }
                     this._lastActivityTime = Date.now();
                     this._lastX = x;
@@ -226,13 +322,63 @@ const Indicator = GObject.registerClass(
         }
 
         /**
+         * Shows a transient desktop notification for an idle/active
+         * transition, unless the `show-notifications` GSetting is off. Lazily
+         * creates a single reusable MessageTray source (kept alive across
+         * transitions so banners don't pile up under separate sources) and
+         * nulls the cached reference when the source is destroyed. The
+         * MessageTray API differs between GNOME 45/46 (positional args,
+         * showNotification/setTransient) and 47+ (object args,
+         * addNotification/isTransient), so construction branches on the
+         * detected shell major version. Errors are caught so a notification
+         * failure never breaks the monitoring loop.
+         */
+        _notify(title, body) {
+            if (!this._settings.get_boolean('show-notifications')) return;
+
+            try {
+                const useNewApi = this._shellMajor >= 47;
+
+                if (!this._notifSource) {
+                    this._notifSource = useNewApi
+                        ? new MessageTray.Source({ title: 'Mouse Move', iconName: 'input-mouse-symbolic' })
+                        : new MessageTray.Source('Mouse Move', 'input-mouse-symbolic');
+                    this._notifSource.connect('destroy', () => {
+                        this._notifSource = null;
+                    });
+                    Main.messageTray.add(this._notifSource);
+                }
+
+                if (useNewApi) {
+                    const notification = new MessageTray.Notification({
+                        source: this._notifSource,
+                        title,
+                        body,
+                        isTransient: true,
+                    });
+                    this._notifSource.addNotification(notification);
+                } else {
+                    const notification = new MessageTray.Notification(this._notifSource, title, body);
+                    notification.setTransient(true);
+                    this._notifSource.showNotification(notification);
+                }
+            } catch (e) {
+                console.error(`MouseMove: Notification error: ${e.message}`);
+            }
+        }
+
+        /**
          * Lifecycle hook called when the indicator is being torn down (e.g.
          * extension disable or shell restart). Stops the monitoring loop so
-         * no further timeouts fire after destruction, then defers to the
-         * parent PanelMenu.Button.destroy for the rest of the cleanup.
+         * no further timeouts fire after destruction, releases the suspend
+         * inhibitor and the notification source, then defers to the parent
+         * PanelMenu.Button.destroy for the rest of the cleanup.
          */
         destroy() {
             this._stopMonitoring();
+            this._removeInhibitor();
+            this._notifSource?.destroy();
+            this._notifSource = null;
             super.destroy();
         }
     }
