@@ -180,6 +180,36 @@ const Indicator = GObject.registerClass(
         }
 
         /**
+         * Performs a dry-run warp to test API compatibility.
+         */
+        testWarp() {
+            console.log("MouseMove: Performing dry-run warp test...");
+            try {
+                let [x, y] = global.get_pointer();
+                this._doWarp(x + 1, y + 1);
+                this._doWarp(x, y);
+                console.log("MouseMove: Dry-run warp test successful!");
+            } catch (e) {
+                console.error(`MouseMove Dry-run Error: ${e.message}`);
+            }
+        }
+
+        _doWarp(newX, newY) {
+            let seat = null;
+            if (typeof global.get_seat === 'function') seat = global.get_seat();
+            else if (global.display && typeof global.display.get_seat === 'function') seat = global.display.get_seat();
+            else if (Clutter.get_default_backend) seat = Clutter.get_default_backend().get_default_seat();
+
+            if (!seat) throw new Error("Could not find seat via any method");
+
+            let device = seat.get_pointer();
+            if (!device) throw new Error("Could not find pointer device");
+            if (typeof device.warp !== 'function') throw new Error("device.warp is not a function");
+
+            device.warp(global.stage || global.display, newX, newY);
+        }
+
+        /**
          * Warps the cursor by `move-distance` pixels (read from GSettings) in
          * the current direction. Direction alternates each call so consecutive
          * jiggles cancel out and the cursor stays near its origin. If the new
@@ -194,11 +224,24 @@ const Indicator = GObject.registerClass(
         _moveMouse() {
             try {
                 let [x, y] = global.get_pointer();
-                const monitorIndex = Main.layoutManager.findIndexAt(x, y);
                 
-                if (monitorIndex === -1) return;
+                // Find monitor manually for maximum compatibility
+                let monitor = null;
+                if (Main.layoutManager && Main.layoutManager.monitors) {
+                    for (let m of Main.layoutManager.monitors) {
+                        if (x >= m.x && x < m.x + m.width && y >= m.y && y < m.y + m.height) {
+                            monitor = m;
+                            break;
+                        }
+                    }
+                }
+                
+                if (!monitor) {
+                    monitor = Main.layoutManager.primaryMonitor;
+                }
 
-                const rect = Main.layoutManager.monitors[monitorIndex];
+                if (!monitor) throw new Error("Could not determine monitor geometry");
+
                 let moveDistance = this._settings.get_int('move-distance');
 
                 if (this._settings.get_boolean('randomize-movement')) {
@@ -213,17 +256,14 @@ const Indicator = GObject.registerClass(
                 let newY = y + (moveDistance * this._moveDirection);
 
                 // Keep within monitor bounds
-                if (newX >= rect.x + rect.width || newX < rect.x) newX = x - (moveDistance * this._moveDirection);
-                if (newY >= rect.y + rect.height || newY < rect.y) newY = y - (moveDistance * this._moveDirection);
+                if (newX >= monitor.x + monitor.width || newX < monitor.x) newX = x - (moveDistance * this._moveDirection);
+                if (newY >= monitor.y + monitor.height || newY < monitor.y) newY = y - (moveDistance * this._moveDirection);
                 
                 // Safety clamp
-                newX = Math.max(rect.x, Math.min(newX, rect.x + rect.width - 1));
-                newY = Math.max(rect.y, Math.min(newY, rect.y + rect.height - 1));
+                newX = Math.max(monitor.x, Math.min(newX, monitor.x + monitor.width - 1));
+                newY = Math.max(monitor.y, Math.min(newY, monitor.y + monitor.height - 1));
 
-                // Correct seat retrieval for GNOME 45+
-                const seat = global.get_seat();
-                const device = seat.get_pointer();
-                device.warp(global.stage, newX, newY);
+                this._doWarp(newX, newY);
 
                 // Update cached position and activity time
                 this._lastX = newX;
@@ -260,6 +300,8 @@ export default class MouseMoveExtension extends Extension {
     enable() {
         this._indicator = new Indicator(this);
         Main.panel.addToStatusArea(this.uuid, this._indicator);
+        // Dry-run test immediately on enable
+        this._indicator.testWarp();
     }
 
     /**
