@@ -1,6 +1,14 @@
 # Release Notes
 
-## [v1.3.20260514062856] - 2026-05-14
+## [1.4.0] - 2026-05-28
+### Fixed
+- **Critical Logic Fix**: Resolved a memory leak where toggling the extension created multiple concurrent "zombie" loops.
+- **Improved Responsiveness**: Refactored the idle-check mechanism. It now checks for inactivity every 5 seconds, ensuring the cursor moves much closer to the set threshold.
+- **Modern GNOME Compatibility**: Switched to the `Clutter/Meta` Pointer API (`device.warp`) for more reliable movement on GNOME 45-49.
+- **State Persistence**: Removed the forced reset of the "Enabled" setting on startup. The extension now respects your last toggled state.
+- **Monitor Bounds Safety**: Added safety clamping to ensure the cursor never warps outside the visible monitor geometry.
+
+## [1.3.20260514062856] - 2024-05-14
 ### Added
 - **Randomize Movement**: New setting to vary the cursor jump distance (50-150% of base value) for a more natural feel.
 - **CI/CD Workflow**: Automated metadata validation and packaging via GitHub Actions.

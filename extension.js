@@ -57,7 +57,7 @@ const Indicator = GObject.registerClass(
             });
             this.menu.addMenuItem(settingsItem);
 
-            this._settings.connect('changed::enabled', () => {
+            this._settingsId = this._settings.connect('changed::enabled', () => {
                 this._updateEnabledState();
             });
 
@@ -92,6 +92,11 @@ const Indicator = GObject.registerClass(
          */
         _startMonitoring() {
             this._stopMonitoring();
+            // Reset activity time on start so we don't jump immediately if we were already idle
+            this._lastActivityTime = Date.now();
+            let [x, y] = global.get_pointer();
+            this._lastX = x;
+            this._lastY = y;
             this._checkIdle();
         }
 
@@ -115,16 +120,18 @@ const Indicator = GObject.registerClass(
          *
          * Reads GSettings:
          *   - `idle-seconds`   (int, seconds) → threshold before jiggling
-         *   - `check-interval` (int, minutes) → delay until the next tick
+         *   - `check-interval` (int, minutes) → delay until the next tick AFTER movement
          */
         _checkIdle() {
             if (!this._enabled) return;
 
             this._updateActivityTime();
 
-            const idleTime = Date.now() - this._lastActivityTime;
+            const now = Date.now();
+            const idleTime = now - this._lastActivityTime;
             const threshold = this._settings.get_int('idle-seconds') * 1000;
-            const interval = this._settings.get_int('check-interval') * 60 * 1000;
+            
+            let nextCheckDelay;
 
             if (idleTime >= threshold) {
                 if (!this._isIdle) {
@@ -132,10 +139,14 @@ const Indicator = GObject.registerClass(
                     console.log('MouseMove: User went idle — activating cursor movement');
                 }
                 this._moveMouse();
-                this._lastActivityTime = Date.now();
+                // After movement, we wait the user-defined check interval (in minutes)
+                nextCheckDelay = this._settings.get_int('check-interval') * 60 * 1000;
+            } else {
+                // Not idle yet, check again soon (every 5 seconds) to catch the idle transition accurately
+                nextCheckDelay = Math.min(5000, threshold - idleTime + 100);
             }
 
-            this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, interval, () => {
+            this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, nextCheckDelay, () => {
                 this._checkIdle();
                 return GLib.SOURCE_REMOVE;
             });
@@ -152,7 +163,8 @@ const Indicator = GObject.registerClass(
             try {
                 let [x, y] = global.get_pointer();
 
-                if (x !== this._lastX || y !== this._lastY) {
+                // Use a small tolerance to avoid noise, though usually not needed for mouse
+                if (Math.abs(x - this._lastX) > 1 || Math.abs(y - this._lastY) > 1) {
                     if (this._isIdle) {
                         this._isIdle = false;
                         console.log('MouseMove: User presence detected — deactivating cursor movement');
@@ -180,11 +192,12 @@ const Indicator = GObject.registerClass(
          */
         _moveMouse() {
             try {
-                const display = Gdk.Display.get_default();
-                if (!display) return;
-
                 let [x, y] = global.get_pointer();
+                const display = global.display;
+                const seat = display.get_seat();
+                const device = seat.get_pointer();
                 const monitor = display.get_monitor_at_point(x, y);
+                
                 if (!monitor) return;
 
                 const rect = monitor.get_geometry();
@@ -196,24 +209,25 @@ const Indicator = GObject.registerClass(
                     moveDistance = Math.max(1, Math.round(moveDistance * factor));
                 }
 
-                this._lastX = x;
-                this._lastY = y;
-
                 this._moveDirection *= -1;
 
                 let newX = x + (moveDistance * this._moveDirection);
                 let newY = y + (moveDistance * this._moveDirection);
 
+                // Keep within monitor bounds
                 if (newX >= rect.x + rect.width || newX < rect.x) newX = x - (moveDistance * this._moveDirection);
                 if (newY >= rect.y + rect.height || newY < rect.y) newY = y - (moveDistance * this._moveDirection);
+                
+                // Safety clamp
+                newX = Math.max(rect.x, Math.min(newX, rect.x + rect.width - 1));
+                newY = Math.max(rect.y, Math.min(newY, rect.y + rect.height - 1));
 
-                const seat = display.get_default_seat();
-                const device = seat.get_pointer();
+                device.warp(global.stage, newX, newY);
 
-                device.warp(display.get_default_screen?.() || display, newX, newY);
-
+                // Update cached position and activity time
                 this._lastX = newX;
                 this._lastY = newY;
+                this._lastActivityTime = Date.now();
             } catch (e) {
                 console.error(`MouseMove: Error moving cursor: ${e.message}`);
             }
@@ -227,6 +241,10 @@ const Indicator = GObject.registerClass(
          */
         destroy() {
             this._stopMonitoring();
+            if (this._settingsId) {
+                this._settings.disconnect(this._settingsId);
+                this._settingsId = 0;
+            }
             super.destroy();
         }
     }
@@ -235,14 +253,11 @@ const Indicator = GObject.registerClass(
 export default class MouseMoveExtension extends Extension {
     /**
      * GNOME Shell lifecycle hook fired when the extension is loaded (on
-     * shell startup, login, or `gnome-extensions enable`). Forces the
-     * `enabled` GSetting to false so monitoring never auto-starts — the
-     * user must opt in via the panel switch each session — then constructs
-     * the indicator and adds it to the top-panel status area under the
-     * extension UUID.
+     * shell startup, login, or `gnome-extensions enable`).
+     * Constructs the indicator and adds it to the top-panel status area 
+     * under the extension UUID.
      */
     enable() {
-        this.getSettings().set_boolean('enabled', false);
         this._indicator = new Indicator(this);
         Main.panel.addToStatusArea(this.uuid, this._indicator);
     }
