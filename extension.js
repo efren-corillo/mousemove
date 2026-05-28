@@ -7,6 +7,7 @@ import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 import Gdk from 'gi://Gdk';
 import GObject from 'gi://GObject';
+import Clutter from 'gi://Clutter';
 
 const Indicator = GObject.registerClass(
     class Indicator extends PanelMenu.Button {
@@ -194,13 +195,11 @@ const Indicator = GObject.registerClass(
             try {
                 let [x, y] = global.get_pointer();
                 const display = global.display;
-                const seat = display.get_seat();
-                const device = seat.get_pointer();
-                const monitor = display.get_monitor_at_point(x, y);
+                const monitorIndex = display.get_monitor_index_at_point(x, y);
                 
-                if (!monitor) return;
+                if (monitorIndex === -1) return;
 
-                const rect = monitor.get_geometry();
+                const rect = display.get_monitor_geometry(monitorIndex);
                 let moveDistance = this._settings.get_int('move-distance');
 
                 if (this._settings.get_boolean('randomize-movement')) {
@@ -222,6 +221,9 @@ const Indicator = GObject.registerClass(
                 newX = Math.max(rect.x, Math.min(newX, rect.x + rect.width - 1));
                 newY = Math.max(rect.y, Math.min(newY, rect.y + rect.height - 1));
 
+                // Correct seat retrieval for GNOME 45+
+                const seat = global.get_seat();
+                const device = seat.get_pointer();
                 device.warp(global.stage, newX, newY);
 
                 // Update cached position and activity time
@@ -232,7 +234,6 @@ const Indicator = GObject.registerClass(
                 console.error(`MouseMove: Error moving cursor: ${e.message}`);
             }
         }
-
         /**
          * Lifecycle hook called when the indicator is being torn down (e.g.
          * extension disable or shell restart). Stops the monitoring loop so

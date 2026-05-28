@@ -1,5 +1,9 @@
 # Release Notes
 
+## [1.4.1] - 2026-05-28
+### Fixed
+- **API Mismatch**: Fixed `Meta.Display` method calls (`get_monitor_index_at_point`) for GNOME 46 compatibility.
+
 ## [1.4.0] - 2026-05-28
 ### Fixed
 - **Critical Logic Fix**: Resolved a memory leak where toggling the extension created multiple concurrent "zombie" loops.
