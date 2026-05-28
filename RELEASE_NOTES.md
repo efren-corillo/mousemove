@@ -1,5 +1,9 @@
 # Release Notes
 
+## [1.4.2] - 2026-05-28
+### Fixed
+- **API Stability**: Switched to `Main.layoutManager` for monitor geometry detection, ensuring reliable operation on GNOME 46 and future versions.
+
 ## [1.4.1] - 2026-05-28
 ### Fixed
 - **API Mismatch**: Fixed `Meta.Display` method calls (`get_monitor_index_at_point`) for GNOME 46 compatibility.

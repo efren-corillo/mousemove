@@ -194,12 +194,11 @@ const Indicator = GObject.registerClass(
         _moveMouse() {
             try {
                 let [x, y] = global.get_pointer();
-                const display = global.display;
-                const monitorIndex = display.get_monitor_index_at_point(x, y);
+                const monitorIndex = Main.layoutManager.findIndexAt(x, y);
                 
                 if (monitorIndex === -1) return;
 
-                const rect = display.get_monitor_geometry(monitorIndex);
+                const rect = Main.layoutManager.monitors[monitorIndex];
                 let moveDistance = this._settings.get_int('move-distance');
 
                 if (this._settings.get_boolean('randomize-movement')) {
