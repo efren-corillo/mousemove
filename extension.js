@@ -204,9 +204,16 @@ const Indicator = GObject.registerClass(
 
             let device = seat.get_pointer();
             if (!device) throw new Error("Could not find pointer device");
-            if (typeof device.warp !== 'function') throw new Error("device.warp is not a function");
-
-            device.warp(global.stage || global.display, newX, newY);
+            
+            if (typeof device.warp === 'function') {
+                device.warp(global.stage || global.display, newX, newY);
+            } else if (typeof seat.warp_pointer === 'function') {
+                seat.warp_pointer(global.stage || global.display, newX, newY);
+            } else if (global.display && typeof global.display.set_cursor_position === 'function') {
+                global.display.set_cursor_position(newX, newY);
+            } else {
+                throw new Error("No warp method found on device or seat");
+            }
         }
 
         /**
@@ -300,8 +307,6 @@ export default class MouseMoveExtension extends Extension {
     enable() {
         this._indicator = new Indicator(this);
         Main.panel.addToStatusArea(this.uuid, this._indicator);
-        // Dry-run test immediately on enable
-        this._indicator.testWarp();
     }
 
     /**
