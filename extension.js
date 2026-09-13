@@ -7,6 +7,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import St from 'gi://St';
 import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
+import Clutter from 'gi://Clutter';
 import Gdk from 'gi://Gdk';
 import GObject from 'gi://GObject';
 
@@ -277,19 +278,37 @@ const Indicator = GObject.registerClass(
          * are updated to the new position so _updateActivityTime doesn't
          * mistake the warp itself for user activity.
          *
+         * Version branching:
+         *   - GNOME 50+: Uses Mutter's Meta.Display for monitor geometry and
+         *     Clutter.Seat.warp_pointer() for warping (GDK removed warp(),
+         *     get_monitor_at_point(), and get_default_screen() in GTK 4.22).
+         *   - GNOME 45-49: Uses the legacy GDK path where those deprecated
+         *     APIs still exist.
+         *
          * Reads GSettings:
          *   - `move-distance` (int, pixels)
+         *   - `randomize-movement` (bool)
          */
         _moveMouse() {
             try {
-                const display = Gdk.Display.get_default();
-                if (!display) return;
-
                 let [x, y] = global.get_pointer();
-                const monitor = display.get_monitor_at_point(x, y);
-                if (!monitor) return;
 
-                const rect = monitor.get_geometry();
+                // --- Obtain monitor bounds ---
+                let rect;
+                if (this._shellMajor >= 50) {
+                    // GNOME 50+: GDK removed get_monitor_at_point / get_default_screen;
+                    // use Mutter's Meta.Display API instead.
+                    const monitorIndex = global.display.get_current_monitor();
+                    rect = global.display.get_monitor_geometry(monitorIndex);
+                } else {
+                    // GNOME 45-49: legacy GDK path (deprecated but still present).
+                    const gdkDisplay = Gdk.Display.get_default();
+                    if (!gdkDisplay) return;
+                    const monitor = gdkDisplay.get_monitor_at_point(x, y);
+                    if (!monitor) return;
+                    rect = monitor.get_geometry();
+                }
+
                 let moveDistance = this._settings.get_int('move-distance');
 
                 if (this._settings.get_boolean('randomize-movement')) {
@@ -309,10 +328,18 @@ const Indicator = GObject.registerClass(
                 if (newX >= rect.x + rect.width || newX < rect.x) newX = x - (moveDistance * this._moveDirection);
                 if (newY >= rect.y + rect.height || newY < rect.y) newY = y - (moveDistance * this._moveDirection);
 
-                const seat = display.get_default_seat();
-                const device = seat.get_pointer();
-
-                device.warp(display.get_default_screen?.() || display, newX, newY);
+                // --- Warp the cursor ---
+                if (this._shellMajor >= 50) {
+                    // GNOME 50+: GDK removed Device.warp(); use Clutter.Seat instead.
+                    const seat = Clutter.get_default_backend().get_default_seat();
+                    seat.warp_pointer(newX, newY);
+                } else {
+                    // GNOME 45-49: legacy GDK warp path.
+                    const gdkDisplay = Gdk.Display.get_default();
+                    const seat = gdkDisplay.get_default_seat();
+                    const device = seat.get_pointer();
+                    device.warp(gdkDisplay.get_default_screen?.() || gdkDisplay, newX, newY);
+                }
 
                 this._lastX = newX;
                 this._lastY = newY;
