@@ -44,6 +44,11 @@ if [ -d "$SOURCE_DIR/schemas" ]; then
     cp -r "$SOURCE_DIR/schemas" "$DEST_DIR/"
 fi
 
+# Copy icons directory
+if [ -d "$SOURCE_DIR/icons" ]; then
+    cp -r "$SOURCE_DIR/icons" "$DEST_DIR/"
+fi
+
 echo "Extension files copied successfully!"
 echo ""
 echo "To enable the extension:"
